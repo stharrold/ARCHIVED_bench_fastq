@@ -46,17 +46,41 @@ def parse_elapsed(elapsed):
     return elapsed_dt
 
 
-def recursive_dt_to_totsec(dobj):
-    """TODO
+def recursive_timedelta_to_totsec(dobj):
+    """Recursively convert ``datetime.timedelta`` elements to total seconds
+    in a ``dict``.
+
+    Call this function before writing the ``dict`` to JSON.
+
+    Parameters
+    ----------
+    dobj : dict
+        ``dict`` that may contain ``datetime.timedelta`` elements. ``dict`` may
+        be nested.
+
+    Returns
+    -------
+    dobj_converted : dict
+        ``dict`` with ``datetime.timedelta`` elements converted to
+        total seconds.
     """
-    pass
+    dobj_converted = {}
+    for key in dobj:
+        if isinstance(dobj[key], dt.timedelta):
+            dobj_converted[key] = dobj[key].total_seconds()
+        elif isinstance(dobj[key], dict):
+            dobj_converted[key] = recursive_timedelta_to_totsec(dobj=dobj[key])
+        else:
+            dobj_converted[key] = dobj[key]
+    return dobj_converted
 
 
 def parse_compress(fin, fout=None):
     """Parse terminal output from bench_comress.sh
 
     Parse by filemname, file size, compression method, compresion ratio,
-    compresion and decompression speed.
+    compresion and decompression speed. Note: This function is rigidly
+    dependent upon bench_compress.sh.
 
     Parameters
     ----------
@@ -80,6 +104,7 @@ def parse_compress(fin, fout=None):
                            "{fout}").format(fout=fout))
     # Parse text file into dict.
     parsed = {}
+    skip_lines = None
     catch_initial_size = None
     catch_comp_cmd = None
     catch_comp_time = None
@@ -99,15 +124,16 @@ def parse_compress(fin, fout=None):
                 catch_initial_size = True
                 skip_lines = 1
                 continue
-            elif catch_initial_size:
+            elif catch_initial_size and skip_lines >= 0:
                 if skip_lines > 0:
                     skip_lines -= 1
                     continue
-                else:
+                elif skip_lines == 0:
                     line_arr = line.split()
                     parsed[fname]['size_bytes'] = int(line_arr[0])
                     assert os.path.basename(line_arr[1]) == fname
                     catch_initial_size = False
+                    skip_lines = None
                     continue
             elif line.startswith('Iteration:'):
                 line_arr = line.split(':')
@@ -119,31 +145,69 @@ def parse_compress(fin, fout=None):
                 method = line_arr[1]
                 parsed[fname][iteration][method] = {}
                 catch_comp_cmd = True
-                catch_comp_time = True
-                catch_comp_size = True
-                catch_decomp_cmd = True
-                catch_decomp_time = True
-                catch_decomp_size = True
                 continue
             elif catch_comp_cmd and line.startswith('+ sudo time'):
-                parsed[fname][iteration][method]['command'] = line
+                parsed[fname][iteration][method]['compress'] = {}
+                parsed[fname][iteration][method]['compress']['command'] = line
                 catch_comp_cmd = False
+                catch_comp_time = True
                 continue
             elif catch_comp_time and ('elapsed' in line) and ('CPU' in line):
                 line_arr = line.split()
                 elapsed = parse_elapsed(elapsed=line_arr[2].strip('elapsed'))
-                parsed[fname][iteration][method]['comp_time'] = elapsed
+                parsed[fname][iteration][method]['compress']['time'] = elapsed
                 pct_cpu = line_arr[3].strip('%CPU')
                 if pct_cpu == '?':
                     pct_cpu = np.NaN
                 else:
                     pct_cpu = float(pct_cpu)
-                parsed[fname][iteration][method]['comp_cpu'] = pct_cpu
+                parsed[fname][iteration][method]['compress']['CPU_percent'] = pct_cpu
                 catch_comp_time = False
-    # Write out dict as json.
+                catch_comp_size = True
+                continue
+            elif catch_comp_size:
+                if line.startswith('+ du --bytes'):
+                    skip_lines = 0
+                    continue
+                elif skip_lines == 0:
+                    line_arr = line.split()
+                    parsed[fname][iteration][method]['compress']['size_bytes'] = int(line_arr[0])
+                    catch_comp_size = False
+                    skip_lines = None
+                    catch_decomp_cmd = True
+                    continue
+            elif catch_decomp_cmd and line.startswith('+ sudo time'):
+                parsed[fname][iteration][method]['decompress'] = {}
+                parsed[fname][iteration][method]['decompress']['command'] = line
+                catch_decomp_cmd = False
+                catch_decomp_time = True
+                continue
+            elif catch_decomp_time and ('elapsed' in line) and ('CPU' in line):
+                line_arr = line.split()
+                elapsed = parse_elapsed(elapsed=line_arr[2].strip('elapsed'))
+                parsed[fname][iteration][method]['decompress']['time'] = elapsed
+                pct_cpu = line_arr[3].strip('%CPU')
+                if pct_cpu == '?':
+                    pct_cpu = np.NaN
+                else:
+                    pct_cpu = float(pct_cpu)
+                parsed[fname][iteration][method]['decompress']['CPU_percent'] = pct_cpu
+                catch_decomp_time = False
+                catch_decomp_size = True
+                continue
+            elif catch_decomp_size:
+                if line.startswith('+ du --bytes'):
+                    skip_lines = 0
+                    continue
+                elif skip_lines == 0:
+                    line_arr = line.split()
+                    parsed[fname][iteration][method]['decompress']['size_bytes'] = int(line_arr[0])
+                    catch_decomp_size = False
+                    skip_lines = None
+                    continue
+    # Write out dict as JSON.
     if fout is not None:
-        for key in parsed:
-            if isinstance
+        parsed_converted = recursive_timedelta_to_totsec(dobj=parsed)
         with open(fout, "wb") as fobj:
-            json.dump(parsed, fobj, indent=4, sort_keys=True)
+            json.dump(parsed_converted, fobj, indent=4, sort_keys=True)
     return parsed

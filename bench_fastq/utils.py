@@ -246,14 +246,14 @@ def parsed_dict_to_df(parsed):
             # Skip size_bytes for file.
             if isinstance(parsed[filename][iteration], dict):
                 for method in parsed[filename][iteration]:
-                    compress_df_dict = {}
-                    for compress in parsed[filename][iteration][method]:
-                        if isinstance(parsed[filename][iteration][method][compress], dict):
-                            compress_df_dict[compress] = pd.DataFrame.from_dict(parsed[filename][iteration][method][compress], orient='index')
-                    method_df_dict[method] = pd.concat(compress_df_dict, axis=0)
+                    process_df_dict = {}
+                    for process in parsed[filename][iteration][method]:
+                        if isinstance(parsed[filename][iteration][method][process], dict):
+                            process_df_dict[process] = pd.DataFrame.from_dict(parsed[filename][iteration][method][process], orient='index')
+                    method_df_dict[method] = pd.concat(process_df_dict, axis=0)
                 iteration_df_dict[iteration] = pd.concat(method_df_dict, axis=0)
         filename_df_dict[filename] = pd.concat(iteration_df_dict, axis=0)
     parsed_df = pd.concat(filename_df_dict, axis=0)
-    parsed_df.index.names = ['filename', 'iteration', 'method', 'compress', 'quantity']
+    parsed_df.index.names = ['filename', 'iteration', 'method', 'process', 'quantity']
     parsed_df.columns = ['value']
     return parsed_df

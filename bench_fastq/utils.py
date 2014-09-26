@@ -5,6 +5,7 @@
 
 from __future__ import print_function, division, absolute_import
 import os
+import sys
 import json
 import datetime as dt
 import numpy as np
@@ -155,7 +156,7 @@ def parse_compress(fin, fout=None):
             elif catch_comp_time and ('elapsed' in line) and ('CPU' in line):
                 line_arr = line.split()
                 elapsed = parse_elapsed(elapsed=line_arr[2].strip('elapsed'))
-                parsed[fname][iteration][method]['compress']['time'] = elapsed
+                parsed[fname][iteration][method]['compress']['elapsed_time'] = elapsed
                 pct_cpu = line_arr[3].strip('%CPU')
                 if pct_cpu == '?':
                     pct_cpu = np.NaN
@@ -185,7 +186,7 @@ def parse_compress(fin, fout=None):
             elif catch_decomp_time and ('elapsed' in line) and ('CPU' in line):
                 line_arr = line.split()
                 elapsed = parse_elapsed(elapsed=line_arr[2].strip('elapsed'))
-                parsed[fname][iteration][method]['decompress']['time'] = elapsed
+                parsed[fname][iteration][method]['decompress']['elapsed_time'] = elapsed
                 pct_cpu = line_arr[3].strip('%CPU')
                 if pct_cpu == '?':
                     pct_cpu = np.NaN
@@ -202,6 +203,15 @@ def parse_compress(fin, fout=None):
                 elif skip_lines == 0:
                     line_arr = line.split()
                     parsed[fname][iteration][method]['decompress']['size_bytes'] = int(line_arr[0])
+                    if parsed[fname]['size_bytes'] != parsed[fname][iteration][method]['decompress']['size_bytes']:
+                        print(("WARNING: File size before and after compresion test do not match.\n" +
+                               "file name = {fname}\n" +
+                               "method = {method}\n" +
+                               "initial size (bytes) = {init_size}\n" +
+                               "final size (bytes) = {finl_size}").format(fname=fname, method=method,
+                                                                          init_size=parsed[fname]['size_bytes'],
+                                                                          finl_size=parsed[fname][iteration][method]['decompress']['size_bytes']),
+                              file=sys.stderr)
                     catch_decomp_size = False
                     skip_lines = None
                     continue
@@ -211,3 +221,38 @@ def parse_compress(fin, fout=None):
         with open(fout, "wb") as fobj:
             json.dump(parsed_converted, fobj, indent=4, sort_keys=True)
     return parsed
+
+
+def parsed_dict_to_df(parsed):
+    """Convert ``dict`` from parse_compress to ``pandas.dataframe``.
+    
+    Parameters
+    ----------
+    parsed : dict
+        ``dict`` of parsed terminal output.
+    
+    Returns
+    -------
+    parsed_df : pandas.dataframe
+        ``pandas.dataframe`` with heirarchical index by filename, iteration,
+        method, quantity.
+    """
+    filename_df_dict = {}
+    for filename in parsed:
+        iteration_df_dict = {}
+        for iteration in parsed[filename]:
+            method_df_dict = {}
+            # Skip size_bytes for file.
+            if isinstance(parsed[filename][iteration], dict):
+                for method in parsed[filename][iteration]:
+                    compress_df_dict = {}
+                    for compress in parsed[filename][iteration][method]:
+                        if isinstance(parsed[filename][iteration][method][compress], dict):
+                            compress_df_dict[compress] = pd.DataFrame.from_dict(parsed[filename][iteration][method][compress], orient='index')
+                    method_df_dict[method] = pd.concat(compress_df_dict, axis=0)
+                iteration_df_dict[iteration] = pd.concat(method_df_dict, axis=0)
+        filename_df_dict[filename] = pd.concat(iteration_df_dict, axis=0)
+    parsed_df = pd.concat(filename_df_dict, axis=0)
+    parsed_df.index.names = ['filename', 'iteration', 'method', 'compress', 'quantity']
+    parsed_df.columns = ['value']
+    return parsed_df

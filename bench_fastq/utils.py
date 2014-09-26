@@ -223,36 +223,62 @@ def parse_compress(fin, fout=None):
     return parsed
 
 
-def parsed_dict_to_df(parsed):
-    """Convert ``dict`` from parse_compress to ``pandas.dataframe``.
+def dict_depth(dobj, depth=0):
+    """Return the maximum depth of a ``dict``.
+
+    Parameters
+    ----------
+    dobj : dict
+            ``dict`` may have nested levels.
+
+    Returns
+    -------
+    depth : int
+        Largest number of nested ``dict`` within `dobj`.
+    """
+    if isinstance(dobj, dict):
+        depth = max(dict_depth(value, depth=depth+1) for (key, value) in dobj.iteritems())
+    return depth
+
+
+def recursive_dict_to_df(dobj):
+    """Convert a nested ``dict`` to ``pandas.dataframe`` with hierarchial
+    index.
     
     Parameters
     ----------
-    parsed : dict
-        ``dict`` of parsed terminal output.
+    dobj : dict
+        ``dict`` may be nested.
     
     Returns
     -------
-    parsed_df : pandas.dataframe
-        ``pandas.dataframe`` with heirarchical index by filename, iteration,
-        method, quantity.
+    df : pandas.dataframe
+        ``pandas.dataframe`` with heirarchical index for nested ``dict``.
     """
-    filename_df_dict = {}
+    dobj_df = {}
+    is_nested = None
+    for key in dobj:
+        if isinstance(dobj[key], dict):
+            dobj_df[key] = pd.DataFrame.from_dict(dobj[key], orient='index')
+            is_nested = True
+    if is_nested:
+        recursive_dict_to_df(dobj=dobj)
+
     for filename in parsed:
-        iteration_df_dict = {}
         for iteration in parsed[filename]:
             method_df_dict = {}
             # Skip size_bytes for file.
             if isinstance(parsed[filename][iteration], dict):
                 for method in parsed[filename][iteration]:
-                    compress_df_dict = {}
-                    for compress in parsed[filename][iteration][method]:
-                        if isinstance(parsed[filename][iteration][method][compress], dict):
-                            compress_df_dict[compress] = pd.DataFrame.from_dict(parsed[filename][iteration][method][compress], orient='index')
-                    method_df_dict[method] = pd.concat(compress_df_dict, axis=0)
-                iteration_df_dict[iteration] = pd.concat(method_df_dict, axis=0)
-        filename_df_dict[filename] = pd.concat(iteration_df_dict, axis=0)
-    parsed_df = pd.concat(filename_df_dict, axis=0)
-    parsed_df.index.names = ['filename', 'iteration', 'method', 'compress', 'quantity']
-    parsed_df.columns = ['value']
+                    process_df_dict = {}
+                    for process in parsed[filename][iteration][method]:
+                        if isinstance(parsed[filename][iteration][method][process], dict):
+                            process_df_dict[process] = \
+                                pd.DataFrame.from_dict(parsed[filename][iteration][method][process],
+                                                       orient='columns')
+                    method_df_dict[method] = pd.concat(process_df_dict, axis=1)
+        filename_df_dict[filename] = pd.concat(method_df_dict, axis=1)
+    parsed_df = pd.concat(filename_df_dict, axis=1)
+    parsed_df.index.names = ['iteration']
+    parsed_df.colums.names = ['filename', 'method', 'process', 'quantity']
     return parsed_df

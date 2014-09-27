@@ -120,7 +120,8 @@ def parse_compress(fin, fout=None):
                 fname = os.path.splitext(os.path.basename(line_arr[1]))[0]
                 parsed[fname] = {}
                 continue
-            elif line == 'Initial .fastq size:':
+            # Note: Typo in original script "Intial". Do not correct.
+            elif line.startswith('Intial .fastq size:'):
                 catch_initial_size = True
                 skip_lines = 1
                 continue
@@ -259,13 +260,13 @@ def parsed_dict_to_df(parsed_dict):
 def condense_parsed_df(parsed_df, parsed_dict):
     """Condense ``pandas.dataframe`` from parsed terminal output.
     
-    Calculate compression/decompression rate in GB per minute and compression
-    ratio, averaging over iterations and taking median of results.
+    Calculate compression/decompression rate in GB per minute and compression ratio, averaging over iterations and
+    taking median of results.
 
     Parameters
     ----------
-    parsed_df : pandas.dataframe
-        ``pandas.dataframe`` from `parsed_dict_to_df`.
+    parsed_df : pandas.DataFrame
+        ``pandas.DataFrame`` from `parsed_dict_to_df`.
         Index name: quantity
         Heirarchical column names: filename, method, process, iteration
     parsed_dict : dict
@@ -273,12 +274,12 @@ def condense_parsed_df(parsed_df, parsed_dict):
 
     Returns
     -------
-    condensed : pandas.series
+    condensed_ser : pandas.Series
         Heirarchical index names: method, process, quantity
 
     See Also
     --------
-    parsed_dict_to_df, parse_compress
+    parsed_dict_to_df, parse_compress, reduce_condensed_ser
     """
     # Calculate compression/decompression rate in GB per minute and compression ratio.
     # Drop quantities except for 'GB_per_minute' and 'compression_ratio'. Drop test files and incomplete tests.
@@ -296,9 +297,30 @@ def condense_parsed_df(parsed_df, parsed_dict):
     condensed.drop(['CPU_percent', 'command', 'elapsed_time', 'size_bytes', 'elapsed_seconds'], axis=1, inplace=True)
     condensed.drop(['test.fastq', 'test2.fastq'], axis=0, inplace=True)
     condensed.dropna(inplace=True)
-    condensed = condensed.stack().unstack(['filename', 'method', 'process', 'quantity']).mean()
-    condensed = condensed.unstack(['method', 'process', 'quantity']).median()
     return condensed
+
+
+def reduce_condensed_ser(condensed_ser):
+    """Reduce ``pandas.DataFrame`` from `condense_parsed_df` by averaging over iterations and taking the median over
+    file names.
+
+    Parameters
+    ----------
+    condensed_ser : pandas.Series
+        Heirarchical index names: method, process, quantity
+
+    Returns
+    -------
+    reduced_ser :  pandas.Series
+        Heirarchical index names: method, process, quantity
+
+    See Also
+    --------
+    condense_parsed_df, plot_rate, plot_ratio
+    """
+    reduced_ser = condensed_ser.stack().unstack(['filename', 'method', 'process', 'quantity']).mean()
+    reduced_ser = condensed_ser.unstack(['method', 'process', 'quantity']).median()
+    return reduced_ser
 
 
 def plot_rate(condensed, fout=None):
@@ -309,8 +331,8 @@ def plot_rate(condensed, fout=None):
     condensed : pandas.series
         ``pandas.dataframe`` from `condense_parsed_df`.
         Heirarchical index names: method, process, quantity
-    fout : string
-        Path to save file. Extension must be supported by ``matplotlib.pyplot.savefig()``
+    fout : {None}, string, optional
+        Path to save plot as image. Extension must be supported by ``matplotlib.pyplot.savefig()``
 
     Returns
     -------
@@ -318,7 +340,7 @@ def plot_rate(condensed, fout=None):
 
     See Also
     --------
-    condense_parsed_df
+    condense_parsed_df, plot_ratio
     """
     plt.figure()
     pd.DataFrame.plot(condensed.unstack(['quantity'])['GB_per_minute'].unstack(['process']),
@@ -327,6 +349,38 @@ def plot_rate(condensed, fout=None):
     plt.xticks(rotation=45)
     plt.xlabel("Compression method")
     plt.ylabel("Processing rate (GB per minute)")
+    if fout is not None:
+        print("Writing plot to: {fout}".format(fout=fout))
+        plt.savefig(fout, bbox_inches='tight')
+    plt.show()
+    return None
+
+
+def plot_ratio(condensed, fout=None):
+    """Plot compression ratio vs compression method.
+
+    Parameters
+    ----------
+    condensed : pandas.series
+        ``pandas.dataframe`` from `condense_parsed_df`.
+        Heirarchical index names: method, process, quantity
+    fout : {None}, string, optional
+        Path to save plot as image. Extension must be supported by ``matplotlib.pyplot.savefig()``
+
+    Returns
+    -------
+    None
+
+    See Also
+    --------
+    condense_parsed_df, plot_rate
+    """
+    plt.figure()
+    pd.Series.plot(condensed.unstack(['quantity'])['compression_ratio'].unstack(['process'])['compress'],
+                   sort_columns=True, kind='bar', title="Compression size ratio vs compression method")
+    plt.xticks(rotation=45)
+    plt.xlabel("Compression method")
+    plt.ylabel("Compression size ratio\n(compressed size / decompressed size)")
     if fout is not None:
         print("Writing plot to: {fout}".format(fout=fout))
         plt.savefig(fout, bbox_inches='tight')

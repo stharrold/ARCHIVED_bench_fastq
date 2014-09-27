@@ -2,16 +2,15 @@
 """Utils to parse the terminal output from bench_compress.sh
 """
 
-
 from __future__ import print_function, division, absolute_import
 import os
 import sys
-import pdb
 import json
 import datetime as dt
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+
 
 def parse_elapsed(elapsed):
     """Parse string of elapsed time from output of Unix 'time' command into
@@ -78,16 +77,15 @@ def recursive_timedelta_to_totsec(dobj):
 
 
 def parse_compress(fin, fout=None):
-    """Parse terminal output from bench_comress.sh
+    """Parse terminal output from bench_compress.sh
 
-    Parse by filemname, file size, compression method, compresion ratio,
-    compresion and decompression speed. Note: This function is rigidly
-    dependent upon bench_compress.sh.
+    Parse by filename, file size, compression method, compression ratio, compression and decompression speed.
+    Note: This function is rigidly dependent upon bench_compress.sh.
 
     Parameters
     ----------
     fin : string
-        Path to text file with terinal output.
+        Path to text file with terminal output.
     fout : {None}, string, optional
         Path to output .json file of parsed terminal output.
 
@@ -122,7 +120,7 @@ def parse_compress(fin, fout=None):
                 fname = os.path.splitext(os.path.basename(line_arr[1]))[0]
                 parsed[fname] = {}
                 continue
-            elif line == 'Intial .fastq size:':
+            elif line == 'Initial .fastq size:':
                 catch_initial_size = True
                 skip_lines = 1
                 continue
@@ -205,7 +203,8 @@ def parse_compress(fin, fout=None):
                     line_arr = line.split()
                     parsed[fname][iteration][method]['decompress']['size_bytes'] = int(line_arr[0])
                     if parsed[fname]['size_bytes'] != parsed[fname][iteration][method]['decompress']['size_bytes']:
-                        print(("WARNING: File size before and after compresion test do not match.\n" +
+                        # noinspection PyPep8
+                        print(("WARNING: File size before and after compression test do not match.\n" +
                                "file name = {fname}\n" +
                                "method = {method}\n" +
                                "initial size (bytes) = {init_size}\n" +
@@ -238,7 +237,7 @@ def parsed_dict_to_df(parsed_dict):
         ``pandas.dataframe`` with heirarchical index by filename, iteration,
         method, quantity.
     """
-    # TODO: make into recursive method, e.g. http://stackoverflow.com/questions/9538875/recursive-depth-of-python-dictionary
+    # TODO: make recursive method, e.g. http://stackoverflow.com/questions/9538875/recursive-depth-of-python-dictionary
     filename_df_dict = {}
     for filename in parsed_dict:
         iteration_df_dict = {}
@@ -247,7 +246,8 @@ def parsed_dict_to_df(parsed_dict):
             # Skip size_bytes for file.
             if isinstance(parsed_dict[filename][iteration], dict):
                 for method in parsed_dict[filename][iteration]:
-                    method_df_dict[method] = pd.DataFrame.from_dict(parsed_dict[filename][iteration][method], orient='columns')
+                    method_df_dict[method] = pd.DataFrame.from_dict(parsed_dict[filename][iteration][method],
+                                                                    orient='columns')
                 iteration_df_dict[iteration] = pd.concat(method_df_dict, axis=1)
         filename_df_dict[filename] = pd.concat(iteration_df_dict, axis=1)
     parsed_df = pd.concat(filename_df_dict, axis=1)
@@ -284,13 +284,15 @@ def condense_parsed_df(parsed_df, parsed_dict):
     # Drop quantities except for 'GB_per_minute' and 'compression_ratio'. Drop test files and incomplete tests.
     # Average over iterations. Take median of results.
     condensed = parsed_df.stack(['filename', 'method', 'process', 'iteration']).unstack('quantity').copy()
-    condensed['elapsed_seconds'] = condensed['elapsed_time'].apply(lambda x: x.total_seconds() if isinstance(x, dt.timedelta) else x)
+    condensed['elapsed_seconds'] = condensed['elapsed_time'].apply(
+        lambda x: x.total_seconds() if isinstance(x, dt.timedelta) else x)
     condensed['elapsed_seconds'] = condensed['elapsed_seconds'].apply(lambda x: np.NaN if x == 0.0 else x)
     condensed['GB_per_minute'] = (condensed['size_bytes'].div(condensed['elapsed_seconds'])).multiply(60.0 / 1.0E9)
     condensed['compression_ratio'] = np.NaN
     for fname in condensed.index.levels[0].values:
         # TODO: remove SettingWithCopyWarning: A value is trying to be set on a copy of a slice from a DataFrame
-        condensed.loc[fname, 'compression_ratio'].update(condensed.loc[fname, 'size_bytes'].div(parsed_dict[fname]['size_bytes']))
+        condensed.loc[fname, 'compression_ratio'].update(
+            condensed.loc[fname, 'size_bytes'].div(parsed_dict[fname]['size_bytes']))
     condensed.drop(['CPU_percent', 'command', 'elapsed_time', 'size_bytes', 'elapsed_seconds'], axis=1, inplace=True)
     condensed.drop(['test.fastq', 'test2.fastq'], axis=0, inplace=True)
     condensed.dropna(inplace=True)

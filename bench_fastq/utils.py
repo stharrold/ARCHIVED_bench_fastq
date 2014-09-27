@@ -11,7 +11,7 @@ import json
 import datetime as dt
 import numpy as np
 import pandas as pd
-
+import matplotlib.pyplot as plt
 
 def parse_elapsed(elapsed):
     """Parse string of elapsed time from output of Unix 'time' command into
@@ -224,12 +224,12 @@ def parse_compress(fin, fout=None):
     return parsed
 
 
-def parsed_dict_to_df(parsed):
+def parsed_dict_to_df(parsed_dict):
     """Convert ``dict`` from parse_compress to ``pandas.dataframe``.
     
     Parameters
     ----------
-    parsed : dict
+    parsed_dict : dict
         ``dict`` of parsed terminal output.
     
     Returns
@@ -240,17 +240,93 @@ def parsed_dict_to_df(parsed):
     """
     # TODO: make into recursive method, e.g. http://stackoverflow.com/questions/9538875/recursive-depth-of-python-dictionary
     filename_df_dict = {}
-    for filename in parsed:
+    for filename in parsed_dict:
         iteration_df_dict = {}
-        for iteration in parsed[filename]:
+        for iteration in parsed_dict[filename]:
             method_df_dict = {}
             # Skip size_bytes for file.
-            if isinstance(parsed[filename][iteration], dict):
-                for method in parsed[filename][iteration]:
-                    method_df_dict[method] = pd.DataFrame.from_dict(parsed[filename][iteration][method], orient='columns')
+            if isinstance(parsed_dict[filename][iteration], dict):
+                for method in parsed_dict[filename][iteration]:
+                    method_df_dict[method] = pd.DataFrame.from_dict(parsed_dict[filename][iteration][method], orient='columns')
                 iteration_df_dict[iteration] = pd.concat(method_df_dict, axis=1)
         filename_df_dict[filename] = pd.concat(iteration_df_dict, axis=1)
     parsed_df = pd.concat(filename_df_dict, axis=1)
     parsed_df.index.names = ['quantity']
     parsed_df.columns.names = ['filename', 'iteration', 'method', 'process']
     return parsed_df
+
+
+def condense_parsed_df(parsed_df, parsed_dict):
+    """Condense ``pandas.dataframe`` from parsed terminal output.
+    
+    Calculate compression/decompression rate in GB per minute and compression
+    ratio, averaging over iterations and taking median of results.
+
+    Parameters
+    ----------
+    parsed_df : pandas.dataframe
+        ``pandas.dataframe`` from `parsed_dict_to_df`.
+        Index name: quantity
+        Heirarchical column names: filename, method, process, iteration
+    parsed_dict : dict
+        Nested ``dict`` from parse_compress.
+
+    Returns
+    -------
+    condensed : pandas.series
+        Heirarchical index names: method, process, quantity
+
+    See Also
+    --------
+    parsed_dict_to_df, parse_compress
+    """
+    # Calculate compression/decompression rate in GB per minute and compression ratio.
+    # Drop quantities except for 'GB_per_minute' and 'compression_ratio'. Drop test files and incomplete tests.
+    # Average over iterations. Take median of results.
+    condensed = parsed_df.stack(['filename', 'method', 'process', 'iteration']).unstack('quantity').copy()
+    condensed['elapsed_seconds'] = condensed['elapsed_time'].apply(lambda x: x.total_seconds() if isinstance(x, dt.timedelta) else x)
+    condensed['elapsed_seconds'] = condensed['elapsed_seconds'].apply(lambda x: np.NaN if x == 0.0 else x)
+    condensed['GB_per_minute'] = (condensed['size_bytes'].div(condensed['elapsed_seconds'])).multiply(60.0 / 1.0E9)
+    condensed['compression_ratio'] = np.NaN
+    for fname in condensed.index.levels[0].values:
+        # TODO: remove SettingWithCopyWarning: A value is trying to be set on a copy of a slice from a DataFrame
+        condensed.loc[fname, 'compression_ratio'].update(condensed.loc[fname, 'size_bytes'].div(parsed_dict[fname]['size_bytes']))
+    condensed.drop(['CPU_percent', 'command', 'elapsed_time', 'size_bytes', 'elapsed_seconds'], axis=1, inplace=True)
+    condensed.drop(['test.fastq', 'test2.fastq'], axis=0, inplace=True)
+    condensed.dropna(inplace=True)
+    condensed = condensed.stack().unstack(['filename', 'method', 'process', 'quantity']).mean()
+    condensed = condensed.unstack(['method', 'process', 'quantity']).median()
+    return condensed
+
+
+def plot_rate(condensed, fout=None):
+    """Plot processing rate vs compression method.
+
+    Parameters
+    ----------
+    condensed : pandas.series
+        ``pandas.dataframe`` from `condense_parsed_df`.
+        Heirarchical index names: method, process, quantity
+    fout : string
+        Path to save file. Extension must be supported by ``matplotlib.pyplot.savefig()``
+
+    Returns
+    -------
+    None
+
+    See Also
+    --------
+    condense_parsed_df
+    """
+    plt.figure()
+    pd.DataFrame.plot(condensed.unstack(['quantity'])['GB_per_minute'].unstack(['process']),
+                      sort_columns=True, kind='bar', title="Processing rate vs compression method")
+    plt.legend(loc='best', title="Process")
+    plt.xticks(rotation=45)
+    plt.xlabel("Compression method")
+    plt.ylabel("Processing rate (GB per minute)")
+    if fout is not None:
+        print("Writing plot to: {fout}".format(fout=fout))
+        plt.savefig(fout, bbox_inches='tight')
+    plt.show()
+    return None

@@ -219,6 +219,7 @@ def parse_compress(fin, fout=None):
     # Write out dict as JSON.
     if fout is not None:
         parsed_converted = recursive_timedelta_to_totsec(dobj=parsed)
+        print("Writing parsed text to: {fout}".format(fout=fout))
         with open(fout, "wb") as fobj:
             json.dump(parsed_converted, fobj, indent=4, sort_keys=True)
     return parsed
@@ -244,7 +245,7 @@ def parsed_dict_to_df(parsed_dict):
         iteration_df_dict = {}
         for iteration in parsed_dict[filename]:
             method_df_dict = {}
-            # Skip size_bytes for file.
+            # Skip size_bytes for file since not a nested dict.
             if isinstance(parsed_dict[filename][iteration], dict):
                 for method in parsed_dict[filename][iteration]:
                     method_df_dict[method] = pd.DataFrame.from_dict(parsed_dict[filename][iteration][method],
@@ -274,62 +275,65 @@ def condense_parsed_df(parsed_df, parsed_dict):
 
     Returns
     -------
-    condensed_ser : pandas.Series
+    condensed_df : pandas.DataFrame
         Heirarchical index names: method, process, quantity
+        Column name: quantity
 
     See Also
     --------
-    parsed_dict_to_df, parse_compress, reduce_condensed_ser
+    parsed_dict_to_df, parse_compress, reduce_condensed_df
     """
     # Calculate compression/decompression rate in GB per minute and compression ratio.
     # Drop quantities except for 'GB_per_minute' and 'compression_ratio'. Drop test files and incomplete tests.
     # Average over iterations. Take median of results.
-    condensed = parsed_df.stack(['filename', 'method', 'process', 'iteration']).unstack('quantity').copy()
-    condensed['elapsed_seconds'] = condensed['elapsed_time'].apply(
+    condensed_df = parsed_df.stack(['filename', 'method', 'process', 'iteration']).unstack('quantity').copy()
+    condensed_df['elapsed_seconds'] = condensed_df['elapsed_time'].apply(
         lambda x: x.total_seconds() if isinstance(x, dt.timedelta) else x)
-    condensed['elapsed_seconds'] = condensed['elapsed_seconds'].apply(lambda x: np.NaN if x == 0.0 else x)
-    condensed['GB_per_minute'] = (condensed['size_bytes'].div(condensed['elapsed_seconds'])).multiply(60.0 / 1.0E9)
-    condensed['compression_ratio'] = np.NaN
-    for fname in condensed.index.levels[0].values:
+    condensed_df['elapsed_seconds'] = condensed_df['elapsed_seconds'].apply(lambda x: np.NaN if x == 0.0 else x)
+    condensed_df['GB_per_minute'] = np.NaN
+    condensed_df['compression_ratio'] = np.NaN
+    # TODO: Use .values to vectorize
+    for fname in condensed_df.index.levels[0].values:
         # TODO: remove SettingWithCopyWarning: A value is trying to be set on a copy of a slice from a DataFrame
-        condensed.loc[fname, 'compression_ratio'].update(
-            condensed.loc[fname, 'size_bytes'].div(parsed_dict[fname]['size_bytes']))
-    condensed.drop(['CPU_percent', 'command', 'elapsed_time', 'size_bytes', 'elapsed_seconds'], axis=1, inplace=True)
-    condensed.drop(['test.fastq', 'test2.fastq'], axis=0, inplace=True)
-    condensed.dropna(inplace=True)
-    return condensed
+        condensed_df.loc[fname, 'GB_per_minute'].update(
+            (parsed_dict[fname]['size_bytes'] / condensed_df.loc[fname, 'elapsed_seconds']).multiply(60.0 / 1.0E9))
+        condensed_df.loc[fname, 'compression_ratio'].update(
+            condensed_df.loc[fname, 'size_bytes'].div(parsed_dict[fname]['size_bytes']))
+    return condensed_df
 
 
-def reduce_condensed_ser(condensed_ser):
+def reduce_condensed_df(condensed_df):
     """Reduce ``pandas.DataFrame`` from `condense_parsed_df` by averaging over iterations and taking the median over
     file names.
 
     Parameters
     ----------
-    condensed_ser : pandas.Series
+    condensed_df : pandas.DataFrame
         Heirarchical index names: method, process, quantity
+        Column name: quantity
 
     Returns
     -------
-    reduced_ser :  pandas.Series
+    reduced_ser :  pandas.Series'
+        ``pandas.Series`` from `condense_parsed_df`.
         Heirarchical index names: method, process, quantity
 
     See Also
     --------
     condense_parsed_df, plot_rate, plot_ratio
     """
-    reduced_ser = condensed_ser.stack().unstack(['filename', 'method', 'process', 'quantity']).mean()
-    reduced_ser = condensed_ser.unstack(['method', 'process', 'quantity']).median()
+    reduced_ser = condensed_df.stack().unstack(['filename', 'method', 'process', 'quantity']).mean()
+    reduced_ser = reduced_ser.unstack(['method', 'process', 'quantity']).median()
     return reduced_ser
 
 
-def plot_rate(condensed, fout=None):
+def plot_rate(reduced_ser, fout=None):
     """Plot processing rate vs compression method.
 
     Parameters
     ----------
-    condensed : pandas.series
-        ``pandas.dataframe`` from `condense_parsed_df`.
+    reduced_ser : pandas.Series
+        ``pandas.Series`` from `reduce_condensed_df`.
         Heirarchical index names: method, process, quantity
     fout : {None}, string, optional
         Path to save plot as image. Extension must be supported by ``matplotlib.pyplot.savefig()``
@@ -340,14 +344,18 @@ def plot_rate(condensed, fout=None):
 
     See Also
     --------
-    condense_parsed_df, plot_ratio
+    reduce_condensed_df, plot_ratio
     """
     plt.figure()
-    pd.DataFrame.plot(condensed.unstack(['quantity'])['GB_per_minute'].unstack(['process']),
-                      sort_columns=True, kind='bar', title="Processing rate vs compression method")
-    plt.legend(loc='best', title="Process")
-    plt.xticks(rotation=45)
-    plt.xlabel("Compression method")
+    pd.DataFrame.plot(reduced_ser.unstack(['quantity'])['GB_per_minute'].unstack(['process']),
+                      title="Processing rate vs compression method\nmedian results over all files",
+                      sort_columns=True, kind='bar')
+    legend = plt.legend(loc='best', title="Process")
+    legend.get_texts()[0].set_text('Compress')
+    legend.get_texts()[1].set_text('Decompress')
+    xtick_labels = ('(bzip2, --fast)', '(fqz_comp, default)', '(gzip, --fast)', '(quip, default)')
+    plt.xticks(xrange(len(xtick_labels)), xtick_labels, rotation=45)
+    plt.xlabel("Compression method with options")
     plt.ylabel("Processing rate (GB per minute)")
     if fout is not None:
         print("Writing plot to: {fout}".format(fout=fout))
@@ -356,13 +364,13 @@ def plot_rate(condensed, fout=None):
     return None
 
 
-def plot_ratio(condensed, fout=None):
+def plot_ratio(reduced_ser, fout=None):
     """Plot compression ratio vs compression method.
 
     Parameters
     ----------
-    condensed : pandas.series
-        ``pandas.dataframe`` from `condense_parsed_df`.
+    reduced_ser : pandas.Series
+        ``pandas.Series`` from `reduce_condensed_df`.
         Heirarchical index names: method, process, quantity
     fout : {None}, string, optional
         Path to save plot as image. Extension must be supported by ``matplotlib.pyplot.savefig()``
@@ -373,13 +381,15 @@ def plot_ratio(condensed, fout=None):
 
     See Also
     --------
-    condense_parsed_df, plot_rate
+    reduce_condensed_df, plot_rate
     """
     plt.figure()
-    pd.Series.plot(condensed.unstack(['quantity'])['compression_ratio'].unstack(['process'])['compress'],
-                   sort_columns=True, kind='bar', title="Compression size ratio vs compression method")
-    plt.xticks(rotation=45)
-    plt.xlabel("Compression method")
+    pd.Series.plot(reduced_ser.unstack(['quantity'])['compression_ratio'].unstack(['process'])['compress'],
+                   title="Compression size ratio vs compression method\nmedian results over all files",
+                   sort_columns=True, kind='bar')
+    xtick_labels = ('(bzip2, --fast)', '(fqz_comp, default)', '(gzip, --fast)', '(quip, default)')
+    plt.xticks(xrange(len(xtick_labels)), xtick_labels, rotation=45)
+    plt.xlabel("Compression method with options")
     plt.ylabel("Compression size ratio\n(compressed size / decompressed size)")
     if fout is not None:
         print("Writing plot to: {fout}".format(fout=fout))
